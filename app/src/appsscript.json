@@ -1,0 +1,23 @@
+{
+  "timeZone": "America/New_York",
+  "dependencies": {},
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/spreadsheets.currentonly",
+    "https://www.googleapis.com/auth/script.container.ui",
+    "https://www.googleapis.com/auth/script.external_request"
+  ],
+  "addOns": {
+    "common": {
+      "name": "Attio Sync",
+      "logoUrl": "https://www.google.com/images/icons/product/sheets-64.png",
+      "useLocaleFromApp": true,
+      "homepageTrigger": {
+        "enabled": true,
+        "runFunction": "onOpen"
+      }
+    },
+    "sheets": {}
+  }
+}

@@ -1,0 +1,25 @@
+[project]
+name = "sheets-sync"
+version = "0.1.0"
+description = "Default template for PDM package"
+authors = [
+    {name = "Dominic Eccleston", email = "domeccleston@gmail.com"},
+]
+dependencies = [
+    "python-dotenv>=1.0.1",
+    "requests>=2.32.3",
+    "pandas>=2.2.3",
+    "modal>=0.66.9",
+    "google-auth-oauthlib>=1.2.1",
+    "google-api-python-client>=2.153.0",
+    "tqdm>=4.67.0",
+    "schedule>=1.2.2",
+    "functions-framework>=3.8.2",
+]
+requires-python = "==3.13.*"
+readme = "README.md"
+license = {text = "MIT"}
+
+
+[tool.pdm]
+distribution = false

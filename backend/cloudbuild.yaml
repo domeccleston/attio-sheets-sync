@@ -1,0 +1,12 @@
+steps:
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    args:
+      - gcloud
+      - functions
+      - deploy
+      - attio-export
+      - --region=us-central1
+      - --runtime=python39
+      - --trigger-http
+      - --entry-point=attio_export
+      - --service-account=sheets-sync@attio-sheets-sync.iam.gserviceaccount.com
