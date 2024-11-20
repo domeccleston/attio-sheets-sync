@@ -165,20 +165,76 @@ function showLists() {
 }
 
 function syncWithAttio() {
+  const apiKey = getApiKey();
+  if (!apiKey) return; // Already handles UI alert
+  const html = HtmlService.createHtmlOutput(`
+  <div class="container">
+    <div class="spinner"></div>
+    <div id="status">
+      <p>Starting sync...</p>
+      <p class="detail">This may take a few minutes</p>
+    </div>
+  </div>
+
+  <style>
+    .container {
+      text-align: center;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+    }
+    .spinner {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #3498db;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      margin: 20px auto;
+      animation: spin 1s linear infinite;
+    }
+    .detail {
+      color: #666;
+      font-size: 0.9em;
+      margin-top: 8px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    p {
+      margin: 8px 0;
+    }
+  </style>
+
+  <script>
+    setTimeout(() => {
+      document.getElementById('status').innerHTML = 
+        '<p>Sync started!</p><p class="detail">Your sheet will update shortly.</p>';
+      setTimeout(() => google.script.host.close(), 1000);
+    }, 3000);
+  </script>
+`);
+
+  // Get required data
   const token = ScriptApp.getOAuthToken();
-  const sheetId = SpreadsheetApp.getActiveSpreadsheet().getId();
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 
-  const cloudFunctionUrl = "YOUR_CLOUD_FUNCTION_URL";
+  const payload = {
+    attioApiKey: apiKey,
+    googleToken: token,
+    spreadsheetId: spreadsheet.getId(),
+    spreadsheetName: spreadsheet.getName(),
+    userEmail: Session.getEffectiveUser().getEmail(),
+    timestamp: new Date().toISOString(),
+  };
 
-  UrlFetchApp.fetch(cloudFunctionUrl, {
+  // Call Cloud Function
+  UrlFetchApp.fetch("YOUR_CLOUD_FUNCTION_URL", {
     method: "post",
     contentType: "application/json",
-    payload: JSON.stringify({
-      token,
-      sheetId,
-      apiKey: getApiKey(),
-    }),
+    payload: JSON.stringify(payload),
   });
+
+  SpreadsheetApp.getUi().showModalDialog(html, "Syncing with Attio");
 }
 
 function doGet(e) {
