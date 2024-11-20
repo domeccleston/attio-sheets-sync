@@ -3,11 +3,15 @@ import requests
 import time
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from pathlib import Path
 import pandas as pd
 import json
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -154,64 +158,108 @@ def process_record_value(field_name, value_list):
         logger.warning(f"Unknown attribute type '{attribute_type}' for field '{field_name}'")
         return None
 
-def update_spreadsheet(google_token, spreadsheet_id, records_df):
-    """Update the Google Sheet with records"""
+def update_spreadsheet(spreadsheet_id, records_df):
+    """Update the Google Sheet with records using batch updates"""
     try:
         logger.info(f"Starting spreadsheet update with {len(records_df)} records")
         
-        # Create credentials from the token
-        logger.debug("Creating Google credentials")
-        creds = Credentials(
-            token=google_token,
+        # Load service account credentials
+        credentials_path = Path(__file__).parent / 'credentials' / 'credentials.json'
+        credentials = service_account.Credentials.from_service_account_file(
+            credentials_path,
             scopes=['https://www.googleapis.com/auth/spreadsheets']
         )
         
-        service = build('sheets', 'v4', credentials=creds)
+        service = build('sheets', 'v4', credentials=credentials)
         
         # Clean the data
         logger.debug("Cleaning DataFrame")
         records_df = records_df.replace({float('nan'): None})
         records_df = records_df.map(lambda x: str(x) if x is not None else '')
         
-        # Prepare data for upload
+        # Prepare headers and data separately
         headers = records_df.columns.tolist()
-        values = [headers] + records_df.values.tolist()
-        logger.info(f"Prepared {len(values)} rows (including headers) for upload")
+        data_values = records_df.values.tolist()
         
-        # Add size logging
-        total_cells = records_df.size  # rows * columns
-        logger.info(f"Attempting to write {total_cells} cells to spreadsheet")
-        logger.info(f"DataFrame dimensions: {records_df.shape[0]} rows x {records_df.shape[1]} columns")
+        # Debug information
+        logger.info(f"Headers: {headers}")
+        logger.info(f"First row of data: {data_values[0] if data_values else 'No data'}")
         
-        try:
-            # Clear existing data
-            logger.info("Clearing existing spreadsheet data")
-            service.spreadsheets().values().clear(
-                spreadsheetId=spreadsheet_id,
-                range='A1:ZZ'
-            ).execute()
+        # Calculate dimensions
+        total_rows = len(data_values)
+        total_cols = len(headers)
+        
+        # First, resize the sheet to accommodate all our data
+        batch_update_request = {
+            'requests': [
+                {
+                    'updateSheetProperties': {
+                        'properties': {
+                            'sheetId': 0,  # Assumes first sheet
+                            'gridProperties': {
+                                'rowCount': total_rows + 1000,  # Add buffer for rows
+                                'columnCount': total_cols + 5   # Add buffer for columns
+                            }
+                        },
+                        'fields': 'gridProperties(rowCount,columnCount)'
+                    }
+                }
+            ]
+        }
+        
+        logger.info(f"Resizing sheet to {total_rows + 1000} rows and {total_cols + 5} columns")
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body=batch_update_request
+        ).execute()
+        
+        # Convert column number to letter
+        def col_num_to_letter(n):
+            result = ""
+            while n > 0:
+                n, remainder = divmod(n - 1, 26)
+                result = chr(65 + remainder) + result
+            return result or 'A'
+        
+        end_col_letter = col_num_to_letter(total_cols)
+        logger.info(f"Data dimensions: {total_rows} rows x {total_cols} columns (ending at column {end_col_letter})")
+        
+        # Clear existing content
+        clear_range = f'A1:{end_col_letter}{total_rows + 100}'
+        logger.info(f"Clearing range: {clear_range}")
+        service.spreadsheets().values().clear(
+            spreadsheetId=spreadsheet_id,
+            range=clear_range
+        ).execute()
+        
+        # Write headers first
+        logger.info("Writing headers")
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range='A1',
+            valueInputOption='RAW',
+            body={'values': [headers]}
+        ).execute()
+        
+        # Upload data in chunks
+        CHUNK_SIZE = 5000
+        for i in range(0, len(data_values), CHUNK_SIZE):
+            chunk = data_values[i:i + CHUNK_SIZE]
+            # Start at row 2 to account for headers
+            chunk_range = f'A{i+2}:{end_col_letter}{i+len(chunk)+1}'
             
-            # Update the spreadsheet with new data
-            logger.info("Uploading new data to spreadsheet")
-            update_result = service.spreadsheets().values().update(
+            logger.info(f"Uploading chunk {i//CHUNK_SIZE + 1}: range {chunk_range}")
+            logger.info(f"Chunk dimensions: {len(chunk)} rows x {len(chunk[0]) if chunk else 0} columns")
+            
+            service.spreadsheets().values().update(
                 spreadsheetId=spreadsheet_id,
-                range='A1',
+                range=chunk_range,
                 valueInputOption='RAW',
-                body={'values': values}
+                body={'values': chunk}
             ).execute()
-            
-            logger.info(f"Spreadsheet updated successfully: {update_result.get('updatedCells')} cells updated")
-            return True
-        except Exception as e:
-            # Get the actual error details
-            if hasattr(e, 'resp') and hasattr(e.resp, 'status'):
-                if e.resp.status == 429:
-                    logger.error("Google Sheets API rate limit exceeded!")
-                    logger.error(f"Response headers: {e.resp.headers}")  # May contain quota info
-                else:
-                    logger.error(f"Google Sheets API error: Status {e.resp.status}")
-            logger.error(f"Full error details: {str(e)}")
-            raise
+
+        logger.info(f"Spreadsheet updated successfully. Total rows written: {total_rows + 1}")
+        return True
         
     except Exception as e:
         logger.error(f"Error updating spreadsheet: {str(e)}", exc_info=True)
@@ -245,18 +293,10 @@ def process_spreadsheet(request):
     try:
         data = request.get_json()
         
-        # Check if we should use cached data
-        cache_file = data.get('cacheFile')
-        
-        if cache_file:
-            logger.info(f"[{request_id}] Using cached records from {cache_file}")
-            records = load_records_from_file(cache_file)
-        else:
-            # Fetch new records
-            logger.info(f"[{request_id}] Fetching new records from Attio")
-            records = get_object_records(data['attioApiKey'], data['resourceId'])
-            # Save to cache
-            cache_file = save_records_to_file(records, request_id)
+        # Use cached data
+        cache_file = "cache/records_req_1732117368.json"  # Use the latest cached companies records
+        logger.info(f"[{request_id}] Using cached records from {cache_file}")
+        records = load_records_from_file(cache_file)
         
         logger.info(f"[{request_id}] Processing {len(records)} records")
         
@@ -279,7 +319,7 @@ def process_spreadsheet(request):
         df = pd.DataFrame(processed_records)
         
         # Update the spreadsheet
-        update_spreadsheet(data['googleToken'], data['spreadsheetId'], df)
+        update_spreadsheet(data['spreadsheetId'], df)
         
         logger.info(f"[{request_id}] Successfully processed {len(processed_records)} records")
         
