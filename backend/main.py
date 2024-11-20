@@ -3,8 +3,17 @@ import requests
 import time
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+import pandas as pd
+import json
+import os
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 logger = logging.getLogger(__name__)
 
 # Log startup time
@@ -14,6 +23,8 @@ logger.info(f"Starting import of dependencies")
 def fetch_batch(params):
     """Helper function to fetch a single batch of records"""
     api_key, object_id, batch_size, offset = params
+    logger.info(f"Fetching batch: size={batch_size}, offset={offset}")
+    
     url = f"https://api.attio.com/v2/objects/{object_id}/records/query"
     headers = {
         'accept': 'application/json',
@@ -35,38 +46,44 @@ def fetch_batch(params):
     
     for attempt in range(max_retries):
         try:
+            logger.debug(f"Attempt {attempt + 1}/{max_retries} for batch offset={offset}")
             response = requests.post(url, json=payload, headers=headers)
             result = response.json()
             
             if response.status_code != 200:
-                print(f"Error response: {response.status_code} - {result}")  # More detailed error logging
+                logger.error(f"API Error: Status={response.status_code}, Response={result}")
                 raise Exception(f"API returned status {response.status_code}")
             
             if 'error' in result:
-                if result.get('status') == 429:  # Rate limit error
+                if result.get('status') == 429:
                     retry_after = float(result.get('retry_after', base_delay))
+                    logger.warning(f"Rate limit hit, waiting {retry_after}s before retry")
                     time.sleep(retry_after)
                     continue
+                logger.error(f"API Error: {result['error']}")
                 raise Exception(f"API Error: {result['error']}")
             
-            return result.get('data', [])
+            records = result.get('data', [])
+            logger.info(f"Successfully fetched {len(records)} records from offset {offset}")
+            return records
             
         except Exception as e:
-            if attempt == max_retries - 1:  # Last attempt
+            if attempt == max_retries - 1:
+                logger.error(f"Failed all {max_retries} attempts for batch offset={offset}: {str(e)}")
                 raise
-            time.sleep(base_delay * (2 ** attempt))  # Exponential backoff
+            logger.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying...")
+            time.sleep(base_delay * (2 ** attempt))
     
     return []
 
 def get_object_records(api_key, object_id, batch_size=500):
     """Fetch records with minimal parallelization"""
-    total_count = 0
+    all_records = []
     offset = 0
     max_workers = 2  # Just 2 workers
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         while True:
-            # Submit just 2 batches
             futures = [
                 executor.submit(fetch_batch, (api_key, object_id, batch_size, offset)),
                 executor.submit(fetch_batch, (api_key, object_id, batch_size, offset + batch_size))
@@ -77,9 +94,9 @@ def get_object_records(api_key, object_id, batch_size=500):
                 try:
                     batch = future.result()
                     if batch:
-                        total_count += len(batch)
+                        all_records.extend(batch)
                         got_records = True
-                        logger.info(f"Fetched {total_count} records so far")
+                        logger.info(f"Fetched {len(all_records)} records so far")
                 except Exception as e:
                     logger.error(f"Error fetching batch: {e}")
             
@@ -88,7 +105,7 @@ def get_object_records(api_key, object_id, batch_size=500):
                 
             offset += batch_size * max_workers
     
-    return total_count
+    return all_records
 
 def process_record_value(field_name, value_list):
     """Extract the appropriate value based on field type"""
@@ -137,55 +154,150 @@ def process_record_value(field_name, value_list):
         logger.warning(f"Unknown attribute type '{attribute_type}' for field '{field_name}'")
         return None
 
+def update_spreadsheet(google_token, spreadsheet_id, records_df):
+    """Update the Google Sheet with records"""
+    try:
+        logger.info(f"Starting spreadsheet update with {len(records_df)} records")
+        
+        # Create credentials from the token
+        logger.debug("Creating Google credentials")
+        creds = Credentials(
+            token=google_token,
+            scopes=['https://www.googleapis.com/auth/spreadsheets']
+        )
+        
+        service = build('sheets', 'v4', credentials=creds)
+        
+        # Clean the data
+        logger.debug("Cleaning DataFrame")
+        records_df = records_df.replace({float('nan'): None})
+        records_df = records_df.map(lambda x: str(x) if x is not None else '')
+        
+        # Prepare data for upload
+        headers = records_df.columns.tolist()
+        values = [headers] + records_df.values.tolist()
+        logger.info(f"Prepared {len(values)} rows (including headers) for upload")
+        
+        # Add size logging
+        total_cells = records_df.size  # rows * columns
+        logger.info(f"Attempting to write {total_cells} cells to spreadsheet")
+        logger.info(f"DataFrame dimensions: {records_df.shape[0]} rows x {records_df.shape[1]} columns")
+        
+        try:
+            # Clear existing data
+            logger.info("Clearing existing spreadsheet data")
+            service.spreadsheets().values().clear(
+                spreadsheetId=spreadsheet_id,
+                range='A1:ZZ'
+            ).execute()
+            
+            # Update the spreadsheet with new data
+            logger.info("Uploading new data to spreadsheet")
+            update_result = service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range='A1',
+                valueInputOption='RAW',
+                body={'values': values}
+            ).execute()
+            
+            logger.info(f"Spreadsheet updated successfully: {update_result.get('updatedCells')} cells updated")
+            return True
+        except Exception as e:
+            # Get the actual error details
+            if hasattr(e, 'resp') and hasattr(e.resp, 'status'):
+                if e.resp.status == 429:
+                    logger.error("Google Sheets API rate limit exceeded!")
+                    logger.error(f"Response headers: {e.resp.headers}")  # May contain quota info
+                else:
+                    logger.error(f"Google Sheets API error: Status {e.resp.status}")
+            logger.error(f"Full error details: {str(e)}")
+            raise
+        
+    except Exception as e:
+        logger.error(f"Error updating spreadsheet: {str(e)}", exc_info=True)
+        raise
+
+def save_records_to_file(records, request_id):
+    """Save records to a local cache file"""
+    cache_dir = "cache"
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    filepath = os.path.join(cache_dir, f"records_{request_id}.json")
+    logger.info(f"Saving {len(records)} records to {filepath}")
+    
+    with open(filepath, 'w') as f:
+        json.dump(records, f)
+    
+    return filepath
+
+def load_records_from_file(filepath):
+    """Load records from a cache file"""
+    logger.info(f"Loading records from {filepath}")
+    with open(filepath, 'r') as f:
+        return json.load(f)
+
 @functions_framework.http
 def process_spreadsheet(request):
-    # Add proper health check handling
-    if request.method == 'GET':
-        logger.info("Health check received")
-        return {
-            'status': 'healthy',
-            'message': 'Service is ready'
-        }
-        
+    request_id = f"req_{int(time.time())}"
+    start_time = time.time()
+    logger.info(f"[{request_id}] New request received")
+    
     try:
         data = request.get_json()
         
-        # Extract the parameters
-        attio_api_key = data['attioApiKey']
-        resource_type = data['resourceType']
-        resource_id = data['resourceId']
+        # Check if we should use cached data
+        cache_file = data.get('cacheFile')
         
-        if resource_type != 'object':
-            return {
-                'status': 'error',
-                'message': 'Only object type is supported'
-            }, 400
-            
-        records = get_object_records(attio_api_key, resource_id)
+        if cache_file:
+            logger.info(f"[{request_id}] Using cached records from {cache_file}")
+            records = load_records_from_file(cache_file)
+        else:
+            # Fetch new records
+            logger.info(f"[{request_id}] Fetching new records from Attio")
+            records = get_object_records(data['attioApiKey'], data['resourceId'])
+            # Save to cache
+            cache_file = save_records_to_file(records, request_id)
         
-        if not records:
-            return {
-                'status': 'error',
-                'message': f'No records found for object {resource_id}'
-            }, 400
+        logger.info(f"[{request_id}] Processing {len(records)} records")
+        
+        # Process records into a format suitable for the spreadsheet
+        processed_records = []
+        for record in records:
+            if 'values' not in record:
+                continue
+                
+            csv_data = {
+                'record_id': record['id']['record_id']
+            }
             
-        print(f"Fetched {len(records)} records from object {resource_id}")
+            for field_name, value_list in record['values'].items():
+                csv_data[field_name] = process_record_value(field_name, value_list)
+            
+            processed_records.append(csv_data)
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(processed_records)
+        
+        # Update the spreadsheet
+        update_spreadsheet(data['googleToken'], data['spreadsheetId'], df)
+        
+        logger.info(f"[{request_id}] Successfully processed {len(processed_records)} records")
         
         return {
             'status': 'success',
-            'message': f'Successfully fetched {len(records)} records',
-            'record_count': len(records)
+            'message': f'[{request_id}] Successfully uploaded {len(processed_records)} records to spreadsheet',
+            'record_count': len(processed_records)
         }
 
     except KeyError as e:
         return {
             'status': 'error',
-            'message': f'Missing required parameter: {str(e)}'
+            'message': f'[{request_id}] Missing required parameter: {str(e)}'
         }, 400
     except Exception as e:
         return {
             'status': 'error',
-            'message': str(e)
+            'message': f'[{request_id}] Error: {str(e)}'
         }, 400
 
 logger.info(f"Dependencies imported in {time.time() - start_time:.2f}s")

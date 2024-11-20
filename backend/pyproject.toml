@@ -8,6 +8,8 @@ authors = [
 dependencies = [
     "functions-framework>=3.8.2",
     "requests>=2.31.0",
+    "pandas>=2.0.0",
+    "google-api-python-client>=2.0.0",
 ]
 requires-python = "==3.11.*"
 readme = "README.md"

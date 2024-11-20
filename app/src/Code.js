@@ -22,7 +22,10 @@ function onOpen(e) {
       .addItem("Configure API Key", "promptForApiKey")
       .addItem("Show Available Lists", "showLists")
       .addSeparator()
-      .addItem("Reset Authorization", "resetAuth");
+      .addItem("Refresh Google Token", "refreshGoogleToken")
+      .addItem("Reset Authorization", "resetAuth")
+      .addSeparator()
+      .addItem("Debug Info", "showDebugInfo");
   }
 
   menu.addToUi();
@@ -241,4 +244,72 @@ function doGet(e) {
   return HtmlService.createHtmlOutput(
     "This add-on is meant to be used within Google Sheets."
   );
+}
+
+function showDebugInfo() {
+  const ui = SpreadsheetApp.getUi();
+  const apiKey =
+    PropertiesService.getUserProperties().getProperty("ATTIO_API_KEY") ||
+    "Not set";
+  let googleToken;
+
+  try {
+    ScriptApp.invalidateAuth();
+    googleToken = ScriptApp.getOAuthToken();
+  } catch (e) {
+    googleToken = "Not authorized";
+  }
+
+  const html = HtmlService.createHtmlOutput(
+    `
+    <style>
+      body { 
+        font-family: Arial, sans-serif; 
+        padding: 20px; 
+        line-height: 1.6;
+      }
+      .token-container {
+        background: #f5f5f5;
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 4px;
+        word-break: break-all;
+      }
+      .label {
+        font-weight: bold;
+        color: #666;
+      }
+    </style>
+    <h2>Debug Information</h2>
+    
+    <div class="label">Attio API Key:</div>
+    <div class="token-container">${apiKey}</div>
+    
+    <div class="label">Google OAuth Token:</div>
+    <div class="token-container">${googleToken}</div>
+  `
+  )
+    .setWidth(400)
+    .setHeight(300);
+
+  SpreadsheetApp.getUi().showModalDialog(html, "Debug Information");
+}
+
+function refreshGoogleToken() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const newToken = ScriptApp.getOAuthToken();
+    ui.alert(
+      "Success",
+      "Token refreshed successfully. Please try your sync operation again.",
+      ui.ButtonSet.OK
+    );
+    return newToken;
+  } catch (e) {
+    ui.alert(
+      "Error",
+      "Failed to refresh token: " + e.toString(),
+      ui.ButtonSet.OK
+    );
+  }
 }
