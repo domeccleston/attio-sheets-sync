@@ -21,8 +21,9 @@ distribution = false
 dev = "functions-framework --target process_spreadsheet --debug"
 test = "python test_function.py"
 requirements = "pdm export -f requirements --no-hashes --prod -o requirements.txt"
+logs = "gcloud functions logs read process-spreadsheet-large-v2 --gen2 --region europe-west1 --project attio-sheets-sync --limit 50"
 deploy = """
-gcloud functions deploy process_spreadsheet \
+gcloud functions deploy process-spreadsheet-large-v2 \
     --gen2 \
     --runtime python311 \
     --region europe-west1 \
@@ -30,7 +31,9 @@ gcloud functions deploy process_spreadsheet \
     --entry-point process_spreadsheet \
     --trigger-http \
     --allow-unauthenticated \
-    --project attio-sheets-sync
+    --project attio-sheets-sync \
+    --memory 1024MB \
+    --timeout 540s
 """
 
 [tool.pdm.dev-dependencies]

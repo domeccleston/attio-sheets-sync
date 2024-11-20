@@ -1,10 +1,8 @@
 import functions_framework
 import requests
 import time
-from concurrent.futures import ThreadPoolExecutor
-from flask import Response
-import sys
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -60,47 +58,94 @@ def fetch_batch(params):
     
     return []
 
-def get_object_records(api_key, object_id, batch_size=100):
-    """Fetch all records for an object in parallel batches"""
-    # First get total count
-    try:
-        initial_batch = fetch_batch((api_key, object_id, 1, 0))
-        if not initial_batch or 'total_count' not in initial_batch[0]:
-            raise Exception("Failed to get total record count")
-    except Exception as e:
-        print(f"Error getting initial count: {e}")
-        return []
+def get_object_records(api_key, object_id, batch_size=500):
+    """Fetch records with minimal parallelization"""
+    total_count = 0
+    offset = 0
+    max_workers = 2  # Just 2 workers
     
-    total_records = initial_batch[0].get('total_count', 0)
-    print(f"Total records to fetch: {total_records}")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        while True:
+            # Submit just 2 batches
+            futures = [
+                executor.submit(fetch_batch, (api_key, object_id, batch_size, offset)),
+                executor.submit(fetch_batch, (api_key, object_id, batch_size, offset + batch_size))
+            ]
+            
+            got_records = False
+            for future in futures:
+                try:
+                    batch = future.result()
+                    if batch:
+                        total_count += len(batch)
+                        got_records = True
+                        logger.info(f"Fetched {total_count} records so far")
+                except Exception as e:
+                    logger.error(f"Error fetching batch: {e}")
+            
+            if not got_records:
+                break
+                
+            offset += batch_size * max_workers
     
-    # Calculate batches
-    offsets = range(0, total_records, batch_size)
-    params = [(api_key, object_id, batch_size, offset) for offset in offsets]
+    return total_count
+
+def process_record_value(field_name, value_list):
+    """Extract the appropriate value based on field type"""
+    if not value_list:
+        return None
+        
+    first_value = value_list[0]
+    attribute_type = first_value.get('attribute_type')
     
-    # Fetch in parallel
-    all_records = []
-    completed = 0
-    total_batches = len(params)
-    
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(fetch_batch, p) for p in params]
-        for future in futures:
-            try:
-                batch_records = future.result()
-                all_records.extend(batch_records)
-                completed += 1
-                print(f"Completed {completed}/{total_batches} batches")
-            except Exception as e:
-                print(f"Error fetching batch: {e}")
-    
-    return all_records
+    if attribute_type == 'personal-name':
+        return first_value.get('full_name')
+    elif attribute_type == 'email-address':
+        return first_value.get('email_address')
+    elif attribute_type == 'location':
+        parts = [
+            first_value.get('locality'),
+            first_value.get('region'),
+            first_value.get('country_code')
+        ]
+        return ', '.join(filter(None, parts))
+    elif attribute_type == 'record-reference':
+        return first_value.get('target_record_id')
+    elif attribute_type == 'text':
+        return first_value.get('value')
+    elif attribute_type == 'number':
+        return first_value.get('value')
+    elif attribute_type == 'timestamp':
+        return first_value.get('value')
+    elif attribute_type == 'select':
+        return first_value.get('option', {}).get('title')
+    elif attribute_type == 'domain':
+        return first_value.get('domain')
+    elif attribute_type == 'date':
+        return first_value.get('value')
+    elif attribute_type == 'currency':
+        return first_value.get('value')
+    elif attribute_type == 'interaction':
+        return first_value.get('value')
+    elif attribute_type == 'actor-reference':
+        actor_type = first_value.get('referenced_actor_type')
+        actor_id = first_value.get('referenced_actor_id')
+        if actor_type == 'system':
+            return 'system'
+        return f"{actor_type}:{actor_id}" if actor_id else actor_type
+    else:
+        logger.warning(f"Unknown attribute type '{attribute_type}' for field '{field_name}'")
+        return None
 
 @functions_framework.http
 def process_spreadsheet(request):
-    # Add health check handling
+    # Add proper health check handling
     if request.method == 'GET':
-        return Response(status=200)
+        logger.info("Health check received")
+        return {
+            'status': 'healthy',
+            'message': 'Service is ready'
+        }
         
     try:
         data = request.get_json()

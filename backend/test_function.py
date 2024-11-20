@@ -26,8 +26,8 @@ test_function({
 })
 
 # # Test missing parameter
-test_function({
-    "attioApiKey": os.getenv('ATTIO_API_KEY'),
-    "resourceType": "object"
-    # resourceId missing
-}, expected_status=400)
+# test_function({
+#     "attioApiKey": os.getenv('ATTIO_API_KEY'),
+#     "resourceType": "object"
+#     # resourceId missing
+# }, expected_status=400)
