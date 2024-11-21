@@ -265,25 +265,6 @@ def update_spreadsheet(spreadsheet_id, records_df):
         logger.error(f"Error updating spreadsheet: {str(e)}", exc_info=True)
         raise
 
-def save_records_to_file(records, request_id):
-    """Save records to a local cache file"""
-    cache_dir = "cache"
-    os.makedirs(cache_dir, exist_ok=True)
-    
-    filepath = os.path.join(cache_dir, f"records_{request_id}.json")
-    logger.info(f"Saving {len(records)} records to {filepath}")
-    
-    with open(filepath, 'w') as f:
-        json.dump(records, f)
-    
-    return filepath
-
-def load_records_from_file(filepath):
-    """Load records from a cache file"""
-    logger.info(f"Loading records from {filepath}")
-    with open(filepath, 'r') as f:
-        return json.load(f)
-
 @functions_framework.http
 def process_spreadsheet(request):
     request_id = f"req_{int(time.time())}"
@@ -293,10 +274,9 @@ def process_spreadsheet(request):
     try:
         data = request.get_json()
         
-        # Use cached data
-        cache_file = "cache/records_req_1732117368.json"  # Use the latest cached companies records
-        logger.info(f"[{request_id}] Using cached records from {cache_file}")
-        records = load_records_from_file(cache_file)
+        # Fetch records from Attio
+        logger.info(f"[{request_id}] Fetching records from Attio")
+        records = get_object_records(data['attioApiKey'], data['resourceId'])
         
         logger.info(f"[{request_id}] Processing {len(records)} records")
         
