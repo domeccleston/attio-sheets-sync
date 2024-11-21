@@ -1,7 +1,7 @@
 [project]
 name = "sheets-sync"
 version = "0.1.0"
-description = "Default template for PDM package"
+description = "Sync Attio records to a Google Sheet"
 authors = [
     {name = "Dominic Eccleston", email = "domeccleston@gmail.com"},
 ]
@@ -10,7 +10,6 @@ dependencies = [
     "requests>=2.31.0",
     "pandas>=2.0.0",
     "google-api-python-client>=2.0.0",
-    "pyjwt>=2.10.0",
     "python-dotenv>=1.0.1",
 ]
 requires-python = "==3.11.*"
@@ -36,7 +35,7 @@ gcloud functions deploy process-spreadsheet-large-v2 \
     --trigger-http \
     --allow-unauthenticated \
     --project attio-sheets-sync \
-    --memory 1024MB \
+    --memory 2048MB \
     --timeout 540s
 """
 

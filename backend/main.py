@@ -8,7 +8,6 @@ from googleapiclient.discovery import build
 from pathlib import Path
 import pandas as pd
 import json
-import os
 from dotenv import load_dotenv
 
 load_dotenv()

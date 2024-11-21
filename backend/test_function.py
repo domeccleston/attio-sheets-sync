@@ -11,7 +11,7 @@ def test_function(payload, use_cache=None):
     if use_cache:
         payload['cacheFile'] = use_cache
         
-    url = "http://localhost:8080"
+    url = "https://europe-west1-attio-sheets-sync.cloudfunctions.net/process-spreadsheet-large-v2"
     try:
         response = requests.post(
             url,
