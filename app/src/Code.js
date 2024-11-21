@@ -161,7 +161,7 @@ function showSelector() {
         ${objects.data
           .map(
             (obj) => `
-          <option value="${obj.api_slug}">${obj.plural_noun}</option>
+          <option value="${obj.api_slug}|">${obj.plural_noun}</option>
         `
           )
           .join("")}
@@ -174,7 +174,7 @@ function showSelector() {
         ${lists.data
           .map(
             (list) => `
-          <option value="${list.id}">${list.name}</option>
+          <option value="${list.api_slug}|${list.parent_object[0]}">${list.name}</option>
         `
           )
           .join("")}
@@ -210,15 +210,18 @@ function showSelector() {
   SpreadsheetApp.getUi().showModalDialog(html, "Select Data to Sync");
 }
 
-function startAttioSync(id, type) {
+function startAttioSync(value, type) {
   const apiKey = getApiKey();
   if (!apiKey) return;
+
+  const [apiSlug, parentObject] = value.split("|");
 
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 
   const payload = {
     attioApiKey: apiKey,
-    resourceId: id,
+    resourceName: apiSlug,
+    parentObject: type === "list" ? parentObject : null,
     resourceType: type,
     spreadsheetId: spreadsheet.getId(),
   };

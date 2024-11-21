@@ -99,7 +99,9 @@ def process_record_value(field_name, value_list):
     first_value = value_list[0]
     attribute_type = first_value.get('attribute_type')
     
-    if attribute_type == 'personal-name':
+    if attribute_type == "status":
+        return first_value.get("status", {}).get("title")
+    elif attribute_type == 'personal-name':
         return first_value.get('full_name')
     elif attribute_type == 'email-address':
         return first_value.get('email_address')

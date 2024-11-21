@@ -110,6 +110,36 @@ def get_object_records(api_key, object_id, batch_size=500):
     
     return all_records
 
+def get_list_entries(api_key, list_id):
+    """Fetch entries for a specific list with optional filtering"""
+    url = f"https://api.attio.com/v2/lists/{list_id}/entries/query"
+    headers = {
+        'accept': 'application/json',
+        'authorization': f'Bearer {api_key}',
+        'content-type': 'application/json'
+    }
+    
+    response = requests.post(url, headers=headers)
+    result = response.json()
+    
+    if response.status_code == 200:
+        entries = result['data']
+        print(f"✓ Found {len(entries)} entries")
+        
+        # Log sample entry structure
+        if entries:
+            first_entry = entries[0]
+            print("\nSample entry structure:")
+            print(f"- Parent Record ID: {first_entry['parent_record_id']}")
+            print(f"- Entry Values:")
+            for key in first_entry['entry_values'].keys():
+                print(f"  • {key}")
+        return entries
+    else:
+        print(f"! Error {response.status_code}: {result}")
+        return None
+
+
 def process_record_value(field_name, value_list):
     """Extract the appropriate value based on field type"""
     if not value_list:
@@ -264,6 +294,37 @@ def update_spreadsheet(spreadsheet_id, records_df):
         logger.error(f"Error updating spreadsheet: {str(e)}", exc_info=True)
         raise
 
+def get_parent_records(api_key, object_id, parent_record_ids):
+    """Fetch parent records for list entries"""
+    logger.info(f"Fetching {len(parent_record_ids)} parent records")
+    
+    url = f"https://api.attio.com/v2/objects/{object_id}/records/query"
+    headers = {
+        'accept': 'application/json',
+        'authorization': f'Bearer {api_key}',
+        'content-type': 'application/json'
+    }
+    
+    payload = {
+        "filter": {
+            "record_id": {
+                "in": parent_record_ids
+            }
+        }
+    }
+    
+    response = requests.post(url, json=payload, headers=headers)
+    result = response.json()
+    
+    if response.status_code == 200:
+        return {
+            record['id']['record_id']: record['values']
+            for record in result.get('data', [])
+        }
+    else:
+        logger.error(f"Error fetching parent records: {result}")
+        return {}
+
 @functions_framework.http
 def process_spreadsheet(request):
     request_id = f"req_{int(time.time())}"
@@ -272,27 +333,76 @@ def process_spreadsheet(request):
     
     try:
         data = request.get_json()
-        
-        # Fetch records from Attio
-        logger.info(f"[{request_id}] Fetching records from Attio")
-        records = get_object_records(data['attioApiKey'], data['resourceId'])
+
+        records = []
+        # check if list or object
+        if data['parentObject'] is not None:
+            # Fetch list entries
+            logger.info(f"[{request_id}] Fetching list entries from Attio")
+            records = get_list_entries(data['attioApiKey'], data['resourceName'])
+            
+            # Get parent record IDs
+            parent_record_ids = [record['parent_record_id'] for record in records]
+            
+            # Fetch parent records
+            logger.info(f"[{request_id}] Fetching parent records")
+            parent_records = get_parent_records(data['attioApiKey'], data['parentObject'], parent_record_ids)
+        else:
+            # Fetch records from Attio
+            logger.info(f"[{request_id}] Fetching records from Attio")
+            records = get_object_records(data['attioApiKey'], data['resourceName'])
         
         logger.info(f"[{request_id}] Processing {len(records)} records")
         
         # Process records into a format suitable for the spreadsheet
         processed_records = []
-        for record in records:
-            if 'values' not in record:
-                continue
+        if data['parentObject'] is not None:
+            # Get parent record IDs
+            parent_record_ids = [record['parent_record_id'] for record in records]
+            
+            # Fetch parent records
+            logger.info(f"[{request_id}] Fetching parent records")
+            parent_records = get_parent_records(data['attioApiKey'], data['parentObject'], parent_record_ids)
+            
+            # Process each record with its parent data
+            for record in records:
+                if 'entry_values' not in record:
+                    continue
+                    
+                csv_data = {
+                    'list_entry_id': record['id']['entry_id'],
+                    'parent_record_id': record['parent_record_id']
+                }
                 
-            csv_data = {
-                'record_id': record['id']['record_id']
-            }
-            
-            for field_name, value_list in record['values'].items():
-                csv_data[field_name] = process_record_value(field_name, value_list)
-            
-            processed_records.append(csv_data)
+                # Add parent record values if available
+                parent_id = record['parent_record_id']
+                if parent_id in parent_records:
+                    parent_values = parent_records[parent_id]
+                    for field_name, value_list in parent_values.items():
+                        csv_data[f"parent_{field_name}"] = process_record_value(field_name, value_list)
+                
+                # Add list entry values
+                for field_name, value_list in record['entry_values'].items():
+                    if isinstance(value_list, list) and value_list:
+                        csv_data[f"list_{field_name}"] = process_record_value(field_name, value_list)
+                
+                # Add list entry metadata
+                csv_data['list_created_at'] = record['created_at']
+                processed_records.append(csv_data)
+        else:
+            # Handle regular object records
+            for record in records:
+                if 'values' not in record:
+                    continue
+                    
+                csv_data = {
+                    'record_id': record['id']['record_id']
+                }
+                
+                for field_name, value_list in record['values'].items():
+                    csv_data[field_name] = process_record_value(field_name, value_list)
+                
+                processed_records.append(csv_data)
         
         # Convert to DataFrame
         df = pd.DataFrame(processed_records)
@@ -316,7 +426,7 @@ def process_spreadsheet(request):
     except Exception as e:
         return {
             'status': 'error',
-            'message': f'[{request_id}] Error: {str(e)}'
+            'message': f'[f{request_id}] Error: {str(e)}'
         }, 400
 
 logger.info(f"Dependencies imported in {time.time() - start_time:.2f}s")

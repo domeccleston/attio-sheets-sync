@@ -11,7 +11,7 @@ def test_function(payload, use_cache=None):
     if use_cache:
         payload['cacheFile'] = use_cache
         
-    url = "https://europe-west1-attio-sheets-sync.cloudfunctions.net/process-spreadsheet-large-v2"
+    url = "http://localhost:8080"
     try:
         response = requests.post(
             url,
@@ -37,17 +37,21 @@ def test_function(payload, use_cache=None):
         print(f"ERROR: Request failed: {e}")
         sys.exit(1)
 
-# First run - will download and cache
+# Test with a list
 test_function({
     "attioApiKey": os.getenv('ATTIO_API_KEY'),
     "googleToken": os.getenv('GOOGLE_OAUTH_TOKEN'),
     "spreadsheetId": os.getenv('GOOGLE_SPREADSHEET_ID'),
-    "resourceId": "companies"
+    "resourceType": "list",
+    "resourceName": "sales",  # Replace with your list ID
+    "parentObject": "companies"  # Replace with the parent object type
 })
 
+# Commented out object test for reference
 # test_function({
 #     "attioApiKey": os.getenv('ATTIO_API_KEY'),
-#     "googleToken": os.getenv('GOOGLE_TOKEN'),
-#     "spreadsheetId": os.getenv('SPREADSHEET_ID'),
-#     "resourceId": "people"
-# }, use_cache="cache/records_<timestamp>.json") 
+#     "googleToken": os.getenv('GOOGLE_OAUTH_TOKEN'),
+#     "spreadsheetId": os.getenv('GOOGLE_SPREADSHEET_ID'),
+#     "resourceType": "object",
+#     "resourceId": "companies"
+# }) 
