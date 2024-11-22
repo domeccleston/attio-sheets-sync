@@ -6,6 +6,8 @@ from the Attio in parallel and uploads them in batches to the Google Sheet. This
 dataset of 50k records and 40 attributes, though this was quite slow (~8 minutes). More fleshed out
 implementation would have the ability to run this on a schedule.
 
+30-second Loom [demo](https://www.loom.com/share/e18f52a27c1646b0a434208ab9b0fee2)
+
 The use cases this is designed for are
 - Giving contractors readonly access to Attio lists
 - Giving finance or sales teams the ability to do data analysis in Sheets (or connected apps like Looker)
