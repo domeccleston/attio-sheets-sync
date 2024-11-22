@@ -83,7 +83,7 @@ def get_object_records(api_key, object_id, batch_size=500):
     """Fetch records with minimal parallelization"""
     all_records = []
     offset = 0
-    max_workers = 2  # Just 2 workers
+    max_workers = 2  # Just 2 workers to save memory
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         while True:
