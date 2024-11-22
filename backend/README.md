@@ -6,7 +6,7 @@
 
 After deploying, you should add the URL as the path in `./app/src/Code.js`.
 
-This is quite slow and it'd probabbly make sense to increase the parallelism and memory allocation
+This is quite slow and it'd probably make sense to increase the parallelism and memory allocation
 for the function (currently 2GB)
 
 This also contains a script `cli.py` that allows you to handle syncing data from the CLI, rather than 
