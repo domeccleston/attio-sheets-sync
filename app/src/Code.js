@@ -226,14 +226,11 @@ function startAttioSync(value, type) {
     spreadsheetId: spreadsheet.getId(),
   };
 
-  UrlFetchApp.fetch(
-    "https://europe-west1-attio-sheets-sync.cloudfunctions.net/process-spreadsheet-large-v2",
-    {
-      method: "post",
-      contentType: "application/json",
-      payload: JSON.stringify(payload),
-    }
-  );
+  UrlFetchApp.fetch("<DEPLOYED_FUNCTION_URL>", {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+  });
 
   showSyncProgress();
 }
